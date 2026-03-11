@@ -10,8 +10,6 @@ ACCENT_COLOR = (99, 102, 241)
 TEXT_COLOR   = (240, 240, 245)
 MUTED_COLOR  = (120, 120, 140)
 WIDTH, HEIGHT = 1080, 1920
-FPS = 30
-SECS_PER_SLIDE = 3
 
 def get_fonts():
     try:
@@ -51,36 +49,56 @@ def render_slide(slide_data, slide_num, total, fonts):
 def make_video(slides_data, output_path):
     tmpdir = tempfile.mkdtemp()
     fonts  = get_fonts()
-    frames_dir = os.path.join(tmpdir, "frames")
-    os.makedirs(frames_dir)
+    clip_paths = []
 
-    frame_idx = 0
-    for slide in slides_data:
-        img = render_slide(slide, slides_data.index(slide) + 1, len(slides_data), fonts)
-        # Write same frame FPS * SECS_PER_SLIDE times
-        for _ in range(FPS * SECS_PER_SLIDE):
-            img.save(os.path.join(frames_dir, f"frame_{frame_idx:05d}.png"))
-            frame_idx += 1
+    # Render one PNG per slide, convert each to a 3-second clip
+    for i, slide in enumerate(slides_data):
+        png_path  = os.path.join(tmpdir, f"slide_{i:03d}.png")
+        clip_path = os.path.join(tmpdir, f"clip_{i:03d}.mp4")
 
-    print(f"Wrote {frame_idx} frames to {frames_dir}")
+        img = render_slide(slide, i + 1, len(slides_data), fonts)
+        img.save(png_path)
+        print(f"Saved PNG {i}: {os.path.getsize(png_path)} bytes")
 
+        # Convert single PNG to 3-second mp4
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1",
+            "-i", png_path,
+            "-c:v", "libx264",
+            "-t", "3",
+            "-pix_fmt", "yuv420p",
+            "-vf", "fps=24",
+            clip_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"Slide {i} encode failed: {result.stderr[-300:]}")
+        print(f"Encoded clip {i}: {os.path.getsize(clip_path)} bytes")
+        clip_paths.append(clip_path)
+
+    # Write concat list
+    concat_file = os.path.join(tmpdir, "concat.txt")
+    with open(concat_file, "w") as f:
+        for p in clip_paths:
+            f.write(f"file '{p}'\n")
+
+    # Join all clips
     cmd = [
         "ffmpeg", "-y",
-        "-r", str(FPS),
-        "-i", os.path.join(frames_dir, "frame_%05d.png"),
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_file,
+        "-c", "copy",
         output_path
     ]
-    print(f"Running ffmpeg: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
-    print("STDERR:", result.stderr[-2000:])
-
+    print("Join STDERR:", result.stderr[-500:])
     if result.returncode != 0:
-        raise Exception(f"ffmpeg failed (code {result.returncode}): {result.stderr[-500:]}")
+        raise Exception(f"Concat failed: {result.stderr[-300:]}")
 
     size = os.path.getsize(output_path)
-    print(f"Video created: {output_path} ({size} bytes)")
+    print(f"Final video: {output_path} ({size} bytes)")
     shutil.rmtree(tmpdir)
     return output_path
 
