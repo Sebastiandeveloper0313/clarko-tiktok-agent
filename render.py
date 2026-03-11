@@ -82,7 +82,8 @@ def make_video(slides_data, output_path):
         "-f", "concat",
         "-safe", "0",
         "-i", list_file,
-        "-vf", "fps=30,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+        "-vf", "fps=30,format=yuv420p",
+        "-s", "1080x1920",
         output_path
     ], check=True)
 
