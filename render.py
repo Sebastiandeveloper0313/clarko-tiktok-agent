@@ -1,7 +1,7 @@
 # render.py — Clarko TikTok Slide Renderer (local photo backgrounds)
 from flask import Flask, request, jsonify
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
-import os, requests, tempfile, textwrap, traceback, json, random, glob
+import os, requests, tempfile, textwrap, traceback, json, random, glob, io, base64
 
 app = Flask(__name__)
 
@@ -226,6 +226,28 @@ def render_endpoint():
         tb = traceback.format_exc()
         print(f"ERROR: {tb}")
         return jsonify({"ok": False, "error": str(e), "traceback": tb}), 500
+
+@app.route("/preview", methods=["POST"])
+def preview_endpoint():
+    try:
+        data   = request.get_json(force=True)
+        slides = data.get("slides", [])
+        if not slides:
+            return jsonify({"ok": False, "error": "No slides"}), 400
+        fonts  = get_fonts()
+        bg_img = get_background_photo()
+        html = "<html><body style='background:#111;display:flex;gap:10px;flex-wrap:wrap;padding:20px'>"
+        for i, slide in enumerate(slides):
+            img = render_slide(slide, i + 1, len(slides), fonts, bg_img)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            html += f"<img src='data:image/jpeg;base64,{b64}' style='height:400px;border-radius:8px'/>"
+        html += "</body></html>"
+        from flask import Response
+        return Response(html, mimetype="text/html")
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/health", methods=["GET"])
 def health():
