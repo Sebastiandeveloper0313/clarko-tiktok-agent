@@ -77,29 +77,19 @@ def make_video(slides_data, output_path):
         png_paths.append(path)
         print(f"Saved slide {i}: {path} ({os.path.getsize(path)} bytes)")
 
-    # Write concat file
-    concat_file = os.path.join(tmpdir, "list.txt")
-    with open(concat_file, "w") as f:
-        for p in png_paths:
-            f.write(f"file '{p}'\n")
-            f.write("duration 3\n")
-        # ffmpeg concat needs last file repeated without duration
-        f.write(f"file '{png_paths[-1]}'\n")
-
-    print(f"Concat file written: {concat_file}")
-    print(open(concat_file).read())
-
-    # Run ffmpeg
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", concat_file,
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-r", "30",
-        output_path
-    ]
+    # Run ffmpeg using image sequence
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1",
+            "-framerate", "1",
+            "-pattern_type", "sequence",
+            "-i", os.path.join(tmpdir, "slide_%03d.png"),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-vf", "fps=30",
+            "-t", str(len(slides_data) * 3),
+            output_path
+        ]
     print(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     print("STDOUT:", result.stdout[-500:] if result.stdout else "")
