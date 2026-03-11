@@ -104,7 +104,7 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
     draw.text((WIDTH - 110, 55), counter, fill=(200, 200, 200), font=font_sm)
 
     label = str(slide_data.get("label", "")).upper()
-    if label and label != "HOOK":
+    if label and label not in ("HOOK", "CTA"):
         lb = draw.textbbox((0,0), label, font=font_label)
         lw = lb[2] - lb[0]
         draw.text(((WIDTH - lw) // 2, box_top + 55), label, fill=(180, 160, 255), font=font_label)
