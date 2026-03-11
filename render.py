@@ -1,7 +1,7 @@
-# render.py — Clarko TikTok Slide Renderer
+# render.py — Clarko TikTok Slide Renderer (image-only, no ffmpeg)
 from flask import Flask, request, jsonify
 from PIL import Image, ImageDraw, ImageFont
-import os, subprocess, requests, tempfile, textwrap, traceback, shutil
+import os, requests, tempfile, textwrap, traceback, base64
 
 app = Flask(__name__)
 
@@ -46,63 +46,6 @@ def render_slide(slide_data, slide_num, total, fonts):
     draw.text((60, HEIGHT - 72), "clarko.ai", fill=MUTED_COLOR, font=font_sm)
     return img
 
-def make_video(slides_data, output_path):
-    tmpdir = tempfile.mkdtemp()
-    fonts  = get_fonts()
-    clip_paths = []
-
-    for i, slide in enumerate(slides_data):
-        png_path  = os.path.join(tmpdir, f"slide_{i:03d}.png")
-        clip_path = os.path.join(tmpdir, f"clip_{i:03d}.mp4")
-
-        img = render_slide(slide, i + 1, len(slides_data), fonts)
-        img.save(png_path)
-        print(f"Saved PNG {i}: {os.path.getsize(png_path)} bytes")
-
-        # Convert single PNG → 3-second video using pipe
-        # Read PNG as raw RGB bytes and pipe into ffmpeg
-        raw_bytes = img.tobytes()  # raw RGB
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "rawvideo",
-            "-pixel_format", "rgb24",
-            "-video_size", f"{WIDTH}x{HEIGHT}",
-            "-framerate", "1",
-            "-i", "pipe:0",
-            "-c:v", "libx264",
-            "-t", "3",
-            "-pix_fmt", "yuv420p",
-            "-vf", "fps=24",
-            clip_path
-        ]
-        result = subprocess.run(cmd, input=raw_bytes, capture_output=True)
-        print(f"Clip {i} stderr: {result.stderr[-300:].decode('utf-8', errors='ignore')}")
-        if result.returncode != 0:
-            raise Exception(f"Slide {i} encode failed (code {result.returncode}): {result.stderr[-200:].decode('utf-8', errors='ignore')}")
-        print(f"Clip {i}: {os.path.getsize(clip_path)} bytes")
-        clip_paths.append(clip_path)
-
-    # Concat all clips
-    concat_file = os.path.join(tmpdir, "concat.txt")
-    with open(concat_file, "w") as f:
-        for p in clip_paths:
-            f.write(f"file '{p}'\n")
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", concat_file,
-        "-c", "copy",
-        output_path
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise Exception(f"Concat failed: {result.stderr[-300:]}")
-
-    print(f"Final video: {os.path.getsize(output_path)} bytes")
-    shutil.rmtree(tmpdir)
-    return output_path
-
 
 @app.route("/render", methods=["POST"])
 def render_endpoint():
@@ -116,33 +59,46 @@ def render_endpoint():
         if not slides:
             return jsonify({"ok": False, "error": "No slides provided"}), 400
 
-        out_path = f"/tmp/tiktok_{os.urandom(4).hex()}.mp4"
-        make_video(slides, out_path)
+        fonts = get_fonts()
+        tmpdir = tempfile.mkdtemp()
 
+        # Render each slide as a PNG and upload to Buffer as images
         buffer_token   = os.environ["BUFFER_TOKEN"]
         buffer_channel = os.environ["BUFFER_CHANNEL_ID"]
 
-        with open(out_path, "rb") as f:
-            upload_resp = requests.post(
-                "https://api.bufferapp.com/1/media/upload.json",
-                headers={"Authorization": f"Bearer {buffer_token}"},
-                files={"file": ("tiktok.mp4", f, "video/mp4")},
-            )
-        print(f"Buffer upload: {upload_resp.status_code} {upload_resp.text}")
-        media_id = upload_resp.json().get("id")
+        media_ids = []
+        for i, slide in enumerate(slides):
+            img = render_slide(slide, i + 1, len(slides), fonts)
+            png_path = os.path.join(tmpdir, f"slide_{i}.png")
+            img.save(png_path)
+            print(f"Slide {i}: {os.path.getsize(png_path)} bytes")
 
+            with open(png_path, "rb") as f:
+                upload_resp = requests.post(
+                    "https://api.bufferapp.com/1/media/upload.json",
+                    headers={"Authorization": f"Bearer {buffer_token}"},
+                    files={"file": (f"slide_{i}.png", f, "image/png")},
+                )
+            print(f"Upload {i}: {upload_resp.status_code} {upload_resp.text[:200]}")
+            mid = upload_resp.json().get("id")
+            if mid:
+                media_ids.append(mid)
+
+        print(f"Uploaded {len(media_ids)} images")
+
+        # Post to TikTok via Buffer with all images
         post_resp = requests.post(
             "https://api.bufferapp.com/1/updates/create.json",
             headers={"Authorization": f"Bearer {buffer_token}"},
             json={
                 "profile_ids": [buffer_channel],
                 "text": f"{caption}\n\n{hashtags}",
-                "media": {"video_id": media_id},
+                "media": {"photo_ids": media_ids},
                 "now": "true"
             }
         )
-        print(f"Buffer post: {post_resp.status_code} {post_resp.text}")
-        os.remove(out_path)
+        print(f"Buffer post: {post_resp.status_code} {post_resp.text[:300]}")
+
         return jsonify({"ok": True, "buffer": post_resp.json()})
 
     except Exception as e:
