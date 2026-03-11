@@ -32,24 +32,18 @@ def render_slide(slide_data, slide_num, total, fonts):
     img  = Image.new("RGB", (WIDTH, HEIGHT), BG_COLOR)
     draw = ImageDraw.Draw(img)
 
-    # Top accent bar
     draw.rectangle([(0, 0), (WIDTH, 10)], fill=ACCENT_COLOR)
-
-    # Slide counter
     draw.text((WIDTH - 120, 40), f"{slide_num}/{total}", fill=MUTED_COLOR, font=font_sm)
 
-    # Label
     label = str(slide_data.get("label", "")).upper()
     draw.text((60, 140), label, fill=ACCENT_COLOR, font=font_sm)
 
-    # Headline
     headline = str(slide_data.get("headline", ""))
     y = 240
     for line in textwrap.wrap(headline, width=18):
         draw.text((60, y), line, fill=TEXT_COLOR, font=font_big)
         y += 95
 
-    # Subtext
     subtext = str(slide_data.get("subtext", ""))
     if subtext:
         y += 20
@@ -57,7 +51,6 @@ def render_slide(slide_data, slide_num, total, fonts):
             draw.text((60, y), line, fill=MUTED_COLOR, font=font_med)
             y += 58
 
-    # Bottom branding bar
     draw.rectangle([(0, HEIGHT - 100), (WIDTH, HEIGHT)], fill=(18, 18, 24))
     draw.text((60, HEIGHT - 72), "clarko.ai", fill=MUTED_COLOR, font=font_sm)
 
@@ -66,33 +59,27 @@ def render_slide(slide_data, slide_num, total, fonts):
 def make_video(slides_data, output_path):
     tmpdir = tempfile.mkdtemp()
     print(f"Working in tmpdir: {tmpdir}")
-    fonts  = get_fonts()
+    fonts = get_fonts()
 
-    # Render PNGs
-    png_paths = []
     for i, slide in enumerate(slides_data):
         path = os.path.join(tmpdir, f"slide_{i:03d}.png")
-        img  = render_slide(slide, i + 1, len(slides_data), fonts)
+        img = render_slide(slide, i + 1, len(slides_data), fonts)
         img.save(path)
-        png_paths.append(path)
         print(f"Saved slide {i}: {path} ({os.path.getsize(path)} bytes)")
 
-    # Run ffmpeg using image sequence
-        cmd = [
-            "ffmpeg", "-y",
-            "-loop", "1",
-            "-framerate", "1",
-            "-pattern_type", "sequence",
-            "-i", os.path.join(tmpdir, "slide_%03d.png"),
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-vf", "fps=30",
-            "-t", str(len(slides_data) * 3),
-            output_path
-        ]
+    cmd = [
+        "ffmpeg", "-y",
+        "-framerate", "1",
+        "-i", os.path.join(tmpdir, "slide_%03d.png"),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-vf", "fps=30",
+        "-t", str(len(slides_data) * 3),
+        output_path
+    ]
+
     print(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
-    print("STDOUT:", result.stdout[-500:] if result.stdout else "")
     print("STDERR:", result.stderr[-1000:] if result.stderr else "")
 
     if result.returncode != 0:
@@ -118,7 +105,6 @@ def render_endpoint():
         out_path = f"/tmp/tiktok_{os.urandom(4).hex()}.mp4"
         make_video(slides, out_path)
 
-        # Upload to Buffer
         buffer_token   = os.environ["BUFFER_TOKEN"]
         buffer_channel = os.environ["BUFFER_CHANNEL_ID"]
 
@@ -129,9 +115,8 @@ def render_endpoint():
                 files={"file": ("tiktok.mp4", f, "video/mp4")},
             )
 
-        print(f"Buffer upload response: {upload_resp.status_code} {upload_resp.text}")
-        upload_data = upload_resp.json()
-        media_id = upload_data.get("id")
+        print(f"Buffer upload: {upload_resp.status_code} {upload_resp.text}")
+        media_id = upload_resp.json().get("id")
 
         post_resp = requests.post(
             "https://api.bufferapp.com/1/updates/create.json",
@@ -144,9 +129,8 @@ def render_endpoint():
             }
         )
 
-        print(f"Buffer post response: {post_resp.status_code} {post_resp.text}")
+        print(f"Buffer post: {post_resp.status_code} {post_resp.text}")
         os.remove(out_path)
-
         return jsonify({"ok": True, "buffer": post_resp.json()})
 
     except Exception as e:
