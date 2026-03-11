@@ -114,7 +114,7 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
     y += 30
 
     headline = str(slide_data.get("headline", "")).replace("—", "-").replace("–", "-")
-    for line in textwrap.wrap(headline, width=15):
+    for line in textwrap.wrap(headline, width=13)[:4]:
         lb = draw.textbbox((0,0), line, font=font_headline)
         lw = lb[2] - lb[0]
         x = (WIDTH - lw) // 2
@@ -128,7 +128,7 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
 
     subtext = str(slide_data.get("subtext", "")).replace("—", "-").replace("–", "-")
     if subtext:
-        for line in textwrap.wrap(subtext, width=25):
+        for line in textwrap.wrap(subtext, width=28)[:5]:
             lb = draw.textbbox((0,0), line, font=font_sub)
             lw = lb[2] - lb[0]
             draw.text(((WIDTH - lw) // 2, y), line, fill=(220, 220, 220), font=font_sub)
@@ -159,9 +159,9 @@ def upload_image_to_publer(png_path):
 
 def build_slides_html(slides, caption=""):
     fonts  = get_fonts()
-    bg_img = get_background_photo()
     images_html = ""
     for i, slide in enumerate(slides):
+        bg_img = get_background_photo()
         img = render_slide(slide, i + 1, len(slides), fonts, bg_img)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
@@ -213,13 +213,13 @@ def render_endpoint():
 
         fonts  = get_fonts()
         tmpdir = tempfile.mkdtemp()
-        bg_img = get_background_photo()
 
         tiktok_id = get_tiktok_account_id()
         print(f"TikTok ID: {tiktok_id}")
 
         media_ids = []
         for i, slide in enumerate(slides):
+            bg_img   = get_background_photo()
             img      = render_slide(slide, i + 1, len(slides), fonts, bg_img)
             png_path = os.path.join(tmpdir, f"slide_{i}.png")
             img.save(png_path)
