@@ -76,10 +76,13 @@ def upload_image_to_publer(png_path):
     with open(png_path, "rb") as f:
         resp = requests.post(
             f"{PUBLER_BASE}/media",
-            headers={"Authorization": f"Bearer-API {PUBLER_TOKEN}"},
+            headers={
+                "Authorization": f"Bearer-API {PUBLER_TOKEN}",
+                "Publer-Workspace-Id": PUBLER_WORKSPACE_ID,
+            },
             files={"file": (os.path.basename(png_path), f, "image/png")},
         )
-    print(f"Media upload: {resp.status_code} {resp.text[:300]}")
+    print(f"Media upload: {resp.status_code} {resp.text[:500]}")
     data = resp.json()
     # Try different response shapes
     if isinstance(data, dict):
