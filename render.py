@@ -51,7 +51,6 @@ def make_video(slides_data, output_path):
     fonts  = get_fonts()
     clip_paths = []
 
-    # Render one PNG per slide, convert each to a 3-second clip
     for i, slide in enumerate(slides_data):
         png_path  = os.path.join(tmpdir, f"slide_{i:03d}.png")
         clip_path = os.path.join(tmpdir, f"clip_{i:03d}.mp4")
@@ -60,45 +59,47 @@ def make_video(slides_data, output_path):
         img.save(png_path)
         print(f"Saved PNG {i}: {os.path.getsize(png_path)} bytes")
 
-        # Convert single PNG to 3-second mp4
+        # Convert single PNG → 3-second video using pipe
+        # Read PNG as raw RGB bytes and pipe into ffmpeg
+        raw_bytes = img.tobytes()  # raw RGB
         cmd = [
             "ffmpeg", "-y",
-            "-loop", "1",
-            "-i", png_path,
+            "-f", "rawvideo",
+            "-pixel_format", "rgb24",
+            "-video_size", f"{WIDTH}x{HEIGHT}",
+            "-framerate", "1",
+            "-i", "pipe:0",
             "-c:v", "libx264",
             "-t", "3",
             "-pix_fmt", "yuv420p",
             "-vf", "fps=24",
             clip_path
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, input=raw_bytes, capture_output=True)
+        print(f"Clip {i} stderr: {result.stderr[-300:].decode('utf-8', errors='ignore')}")
         if result.returncode != 0:
-            raise Exception(f"Slide {i} encode failed: {result.stderr[-300:]}")
-        print(f"Encoded clip {i}: {os.path.getsize(clip_path)} bytes")
+            raise Exception(f"Slide {i} encode failed (code {result.returncode}): {result.stderr[-200:].decode('utf-8', errors='ignore')}")
+        print(f"Clip {i}: {os.path.getsize(clip_path)} bytes")
         clip_paths.append(clip_path)
 
-    # Write concat list
+    # Concat all clips
     concat_file = os.path.join(tmpdir, "concat.txt")
     with open(concat_file, "w") as f:
         for p in clip_paths:
             f.write(f"file '{p}'\n")
 
-    # Join all clips
     cmd = [
         "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
+        "-f", "concat", "-safe", "0",
         "-i", concat_file,
         "-c", "copy",
         output_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    print("Join STDERR:", result.stderr[-500:])
     if result.returncode != 0:
         raise Exception(f"Concat failed: {result.stderr[-300:]}")
 
-    size = os.path.getsize(output_path)
-    print(f"Final video: {output_path} ({size} bytes)")
+    print(f"Final video: {os.path.getsize(output_path)} bytes")
     shutil.rmtree(tmpdir)
     return output_path
 
