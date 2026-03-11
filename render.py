@@ -11,12 +11,14 @@ TEXT_COLOR   = (240, 240, 245)
 MUTED_COLOR  = (120, 120, 140)
 WIDTH, HEIGHT = 1080, 1920
 
-PUBLER_TOKEN = os.environ.get("PUBLER_TOKEN", "")
-PUBLER_BASE  = "https://app.publer.com/api/v1"
+PUBLER_TOKEN        = os.environ.get("PUBLER_TOKEN", "")
+PUBLER_WORKSPACE_ID = os.environ.get("PUBLER_WORKSPACE_ID", "")
+PUBLER_BASE         = "https://app.publer.com/api/v1"
 
 def publer_headers():
     return {
         "Authorization": f"Bearer-API {PUBLER_TOKEN}",
+        "Publer-Workspace-Id": PUBLER_WORKSPACE_ID,
         "Content-Type": "application/json"
     }
 
