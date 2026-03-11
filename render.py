@@ -68,19 +68,25 @@ def make_video(slides_data, output_path):
         img = render_slide(slide, i+1, total)
         img.save(os.path.join(tmpdir, f"slide_{i:03d}.png"))
 
-    # Use ffmpeg to stitch into video (3 sec per slide)
+    # Build file list for ffmpeg (no glob needed)
+    list_file = os.path.join(tmpdir, "files.txt")
+    with open(list_file, "w") as f:
+        for i in range(total):
+            slide_path = os.path.join(tmpdir, f"slide_{i:03d}.png")
+            f.write(f"file '{slide_path}'\n")
+            f.write(f"duration 3\n")
+
+    # Use ffmpeg concat demuxer instead of glob
     subprocess.run([
         "ffmpeg", "-y",
-        "-framerate", "1/3",
-        "-pattern_type", "glob",
-        "-i", os.path.join(tmpdir, "slide_*.png"),
-        "-vf", "fps=30,format=yuv420p",
-        "-t", str(total * 3),
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_file,
+        "-vf", "fps=30,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
         output_path
     ], check=True)
 
     return output_path
-
 
 @app.route("/render", methods=["POST"])
 def render_endpoint():
