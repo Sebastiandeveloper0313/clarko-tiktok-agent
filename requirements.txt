@@ -2,4 +2,3 @@ flask
 pillow
 requests
 python-dotenv
-ffmpeg-python
