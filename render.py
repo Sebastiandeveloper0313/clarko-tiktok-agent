@@ -1,5 +1,5 @@
 # render.py — Clarko TikTok Slide Renderer (local photo backgrounds)
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 import os, requests, tempfile, textwrap, traceback, json, random, glob, io, base64
 
@@ -12,6 +12,9 @@ PUBLER_BASE         = "https://app.publer.com/api/v1"
 
 # Background images folder (relative to script)
 BG_FOLDER = os.path.join(os.path.dirname(__file__), "backgrounds")
+
+# In-memory store for last preview
+_last_preview_html = None
 
 def publer_headers():
     return {
@@ -51,7 +54,6 @@ def get_background_photo():
     chosen = random.choice(files)
     print(f"Using background: {chosen}")
     img = Image.open(chosen).convert("RGB")
-    # Smart crop to 9:16 portrait
     iw, ih = img.size
     target_ratio = WIDTH / HEIGHT
     current_ratio = iw / ih
@@ -83,11 +85,9 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
     font_headline, font_sub, font_label, font_sm = fonts
 
     img = bg_img.copy()
-    # Darken for readability
     img = ImageEnhance.Brightness(img).enhance(0.42)
     img = img.filter(ImageFilter.GaussianBlur(radius=1.5))
 
-    # Semi-transparent center overlay
     overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     ov_draw = ImageDraw.Draw(overlay)
     box_top    = HEIGHT // 2 - 440
@@ -100,39 +100,32 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    # Slide counter
     counter = f"{slide_num}/{total}"
     draw.text((WIDTH - 110, 55), counter, fill=(200, 200, 200), font=font_sm)
 
-    # Label (skip "HOOK" — only show TIP 1, TIP 2 etc)
     label = str(slide_data.get("label", "")).upper()
     if label and label != "HOOK":
         lb = draw.textbbox((0,0), label, font=font_label)
         lw = lb[2] - lb[0]
         draw.text(((WIDTH - lw) // 2, box_top + 55), label, fill=(180, 160, 255), font=font_label)
 
-    # Thin divider under label
     y = box_top + 115
     draw.line([(WIDTH//2 - 60, y), (WIDTH//2 + 60, y)], fill=(180, 160, 255), width=2)
     y += 30
 
-    # Headline — centered (remove em dashes)
     headline = str(slide_data.get("headline", "")).replace("—", "-").replace("–", "-")
     for line in textwrap.wrap(headline, width=15):
         lb = draw.textbbox((0,0), line, font=font_headline)
         lw = lb[2] - lb[0]
         x = (WIDTH - lw) // 2
-        # shadow
         draw.text((x+3, y+3), line, fill=(0,0,0), font=font_headline)
         draw.text((x, y), line, fill=(255, 255, 255), font=font_headline)
         y += 105
 
-    # Divider
     y += 15
     draw.line([(WIDTH//2 - 80, y), (WIDTH//2 + 80, y)], fill=(180, 160, 255), width=2)
     y += 30
 
-    # Subtext — centered (remove em dashes)
     subtext = str(slide_data.get("subtext", "")).replace("—", "-").replace("–", "-")
     if subtext:
         for line in textwrap.wrap(subtext, width=25):
@@ -141,7 +134,6 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
             draw.text(((WIDTH - lw) // 2, y), line, fill=(220, 220, 220), font=font_sub)
             y += 62
 
-    # Branding
     brand = "clarko.ai"
     lb = draw.textbbox((0,0), brand, font=font_label)
     bw = lb[2] - lb[0]
@@ -164,6 +156,48 @@ def upload_image_to_publer(png_path):
     if isinstance(data, dict):
         return data.get("id") or data.get("data", {}).get("id")
     return None
+
+def build_slides_html(slides, caption=""):
+    fonts  = get_fonts()
+    bg_img = get_background_photo()
+    images_html = ""
+    for i, slide in enumerate(slides):
+        img = render_slide(slide, i + 1, len(slides), fonts, bg_img)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        images_html += f"""
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+            <span style="color:#aaa;font-size:13px">Slide {i+1}</span>
+            <img src="data:image/jpeg;base64,{b64}"
+                 style="height:500px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.5)"/>
+        </div>"""
+
+    caption_html = ""
+    if caption:
+        caption_html = f"""
+        <div style="max-width:700px;margin:30px auto 0;background:#1e1e2e;border-radius:12px;padding:20px">
+            <p style="color:#bbb;font-size:13px;margin:0 0 8px">Caption</p>
+            <p style="color:#fff;font-size:15px;white-space:pre-wrap;margin:0">{caption}</p>
+        </div>"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Clarko TikTok Preview</title>
+  <style>
+    body {{ margin:0; background:#0d0d1a; font-family:sans-serif; }}
+    h1 {{ text-align:center; color:#b4a0ff; padding:30px 0 10px; margin:0; font-size:22px; }}
+    .slides {{ display:flex; gap:20px; overflow-x:auto; padding:20px 30px 30px; }}
+  </style>
+</head>
+<body>
+  <h1>🎬 Clarko TikTok Preview</h1>
+  <div class="slides">{images_html}</div>
+  {caption_html}
+</body>
+</html>"""
 
 @app.route("/render", methods=["POST"])
 def render_endpoint():
@@ -227,27 +261,42 @@ def render_endpoint():
         print(f"ERROR: {tb}")
         return jsonify({"ok": False, "error": str(e), "traceback": tb}), 500
 
+
 @app.route("/preview", methods=["POST"])
 def preview_endpoint():
+    """Called by n8n — renders slides and saves HTML, returns a link to view it."""
+    global _last_preview_html
     try:
         data   = request.get_json(force=True)
         slides = data.get("slides", [])
+        caption = data.get("caption", "")
         if not slides:
             return jsonify({"ok": False, "error": "No slides"}), 400
-        fonts  = get_fonts()
-        bg_img = get_background_photo()
-        html = "<html><body style='background:#111;display:flex;gap:10px;flex-wrap:wrap;padding:20px'>"
-        for i, slide in enumerate(slides):
-            img = render_slide(slide, i + 1, len(slides), fonts, bg_img)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=80)
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            html += f"<img src='data:image/jpeg;base64,{b64}' style='height:400px;border-radius:8px'/>"
-        html += "</body></html>"
-        from flask import Response
-        return Response(html, mimetype="text/html")
+
+        _last_preview_html = build_slides_html(slides, caption)
+
+        # Return the preview URL so n8n can show it
+        host = request.host_url.rstrip("/")
+        preview_url = f"{host}/preview-page"
+        return jsonify({"ok": True, "preview_url": preview_url})
+
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        tb = traceback.format_exc()
+        return jsonify({"ok": False, "error": str(e), "traceback": tb}), 500
+
+
+@app.route("/preview-page", methods=["GET"])
+def preview_page():
+    """Open this URL in your browser to see the last preview."""
+    global _last_preview_html
+    if not _last_preview_html:
+        return Response(
+            "<html><body style='background:#0d0d1a;color:#fff;font-family:sans-serif;text-align:center;padding:60px'>"
+            "<h2>No preview yet</h2><p>Run your n8n workflow with /preview first.</p></body></html>",
+            mimetype="text/html"
+        )
+    return Response(_last_preview_html, mimetype="text/html")
+
 
 @app.route("/health", methods=["GET"])
 def health():
