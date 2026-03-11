@@ -104,19 +104,20 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
     counter = f"{slide_num}/{total}"
     draw.text((WIDTH - 110, 55), counter, fill=(200, 200, 200), font=font_sm)
 
-    # Label
+    # Label (skip "HOOK" — only show TIP 1, TIP 2 etc)
     label = str(slide_data.get("label", "")).upper()
-    lb = draw.textbbox((0,0), label, font=font_label)
-    lw = lb[2] - lb[0]
-    draw.text(((WIDTH - lw) // 2, box_top + 55), label, fill=(180, 160, 255), font=font_label)
+    if label and label != "HOOK":
+        lb = draw.textbbox((0,0), label, font=font_label)
+        lw = lb[2] - lb[0]
+        draw.text(((WIDTH - lw) // 2, box_top + 55), label, fill=(180, 160, 255), font=font_label)
 
     # Thin divider under label
     y = box_top + 115
     draw.line([(WIDTH//2 - 60, y), (WIDTH//2 + 60, y)], fill=(180, 160, 255), width=2)
     y += 30
 
-    # Headline — centered
-    headline = str(slide_data.get("headline", ""))
+    # Headline — centered (remove em dashes)
+    headline = str(slide_data.get("headline", "")).replace("—", "-").replace("–", "-")
     for line in textwrap.wrap(headline, width=15):
         lb = draw.textbbox((0,0), line, font=font_headline)
         lw = lb[2] - lb[0]
@@ -131,8 +132,8 @@ def render_slide(slide_data, slide_num, total, fonts, bg_img):
     draw.line([(WIDTH//2 - 80, y), (WIDTH//2 + 80, y)], fill=(180, 160, 255), width=2)
     y += 30
 
-    # Subtext — centered
-    subtext = str(slide_data.get("subtext", ""))
+    # Subtext — centered (remove em dashes)
+    subtext = str(slide_data.get("subtext", "")).replace("—", "-").replace("–", "-")
     if subtext:
         for line in textwrap.wrap(subtext, width=25):
             lb = draw.textbbox((0,0), line, font=font_sub)
