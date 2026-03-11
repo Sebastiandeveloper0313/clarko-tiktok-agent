@@ -1,103 +1,131 @@
 # render.py — Clarko TikTok Slide Renderer
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from PIL import Image, ImageDraw, ImageFont
-import os, json, subprocess, requests, tempfile, textwrap
+import os, subprocess, requests, tempfile, textwrap, traceback
 
 app = Flask(__name__)
 
-# ── Config ──────────────────────────────────────────────
-BG_COLOR     = (10, 10, 15)        # dark background
-ACCENT_COLOR = (99, 102, 241)      # indigo — change to your brand color
+BG_COLOR     = (10, 10, 15)
+ACCENT_COLOR = (99, 102, 241)
 TEXT_COLOR   = (240, 240, 245)
 MUTED_COLOR  = (120, 120, 140)
-WIDTH, HEIGHT = 1080, 1920         # TikTok portrait dimensions
+WIDTH, HEIGHT = 1080, 1920
 
-def render_slide(slide_data, slide_num, total):
-    img    = Image.new("RGB", (WIDTH, HEIGHT), BG_COLOR)
-    draw   = ImageDraw.Draw(img)
-
-    # Load fonts (fallback to default if custom not present)
+def get_fonts():
+    paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
     try:
-        font_big  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
-        font_med  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 44)
-        font_sm   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
-    except:
-        font_big = font_med = font_sm = ImageFont.load_default()
+        return (
+            ImageFont.truetype(paths[0], 72),
+            ImageFont.truetype(paths[1], 44),
+            ImageFont.truetype(paths[1], 36),
+        )
+    except Exception as e:
+        print(f"Font load failed: {e}, using default")
+        d = ImageFont.load_default()
+        return d, d, d
 
-    # Accent top bar
-    draw.rectangle([(0, 0), (WIDTH, 8)], fill=ACCENT_COLOR)
+def render_slide(slide_data, slide_num, total, fonts):
+    font_big, font_med, font_sm = fonts
+    img  = Image.new("RGB", (WIDTH, HEIGHT), BG_COLOR)
+    draw = ImageDraw.Draw(img)
 
-    # Slide counter (top right)
-    counter_text = f"{slide_num}/{total}"
-    draw.text((WIDTH - 80, 30), counter_text, fill=MUTED_COLOR, font=font_sm)
+    # Top accent bar
+    draw.rectangle([(0, 0), (WIDTH, 10)], fill=ACCENT_COLOR)
 
-    # Label (e.g. "HOOK", "TIP 1", "CTA")
-    label = slide_data.get("label", "").upper()
-    draw.text((60, 120), label, fill=ACCENT_COLOR, font=font_sm)
+    # Slide counter
+    draw.text((WIDTH - 120, 40), f"{slide_num}/{total}", fill=MUTED_COLOR, font=font_sm)
 
-    # Main headline — wrapped
-    headline = slide_data.get("headline", "")
-    lines    = textwrap.wrap(headline, width=20)
-    y_pos    = 220
-    for line in lines:
-        draw.text((60, y_pos), line, fill=TEXT_COLOR, font=font_big)
-        y_pos += 90
+    # Label
+    label = str(slide_data.get("label", "")).upper()
+    draw.text((60, 140), label, fill=ACCENT_COLOR, font=font_sm)
+
+    # Headline
+    headline = str(slide_data.get("headline", ""))
+    y = 240
+    for line in textwrap.wrap(headline, width=18):
+        draw.text((60, y), line, fill=TEXT_COLOR, font=font_big)
+        y += 95
 
     # Subtext
-    subtext = slide_data.get("subtext", "")
+    subtext = str(slide_data.get("subtext", ""))
     if subtext:
-        sub_lines = textwrap.wrap(subtext, width=30)
-        y_pos += 30
-        for line in sub_lines:
-            draw.text((60, y_pos), line, fill=MUTED_COLOR, font=font_med)
-            y_pos += 56
+        y += 20
+        for line in textwrap.wrap(subtext, width=28):
+            draw.text((60, y), line, fill=MUTED_COLOR, font=font_med)
+            y += 58
 
-    # Bottom branding
-    draw.rectangle([(0, HEIGHT-90), (WIDTH, HEIGHT)], fill=(18,18,24))
-    draw.text((60, HEIGHT-65), "clarko.ai", fill=MUTED_COLOR, font=font_sm)
+    # Bottom branding bar
+    draw.rectangle([(0, HEIGHT - 100), (WIDTH, HEIGHT)], fill=(18, 18, 24))
+    draw.text((60, HEIGHT - 72), "clarko.ai", fill=MUTED_COLOR, font=font_sm)
 
     return img
 
-
 def make_video(slides_data, output_path):
     tmpdir = tempfile.mkdtemp()
-    total  = len(slides_data)
+    print(f"Working in tmpdir: {tmpdir}")
+    fonts  = get_fonts()
 
-    # Render each slide as PNG
+    # Render PNGs
+    png_paths = []
     for i, slide in enumerate(slides_data):
-        img = render_slide(slide, i+1, total)
-        img.save(os.path.join(tmpdir, f"slide_{i:03d}.png"))
+        path = os.path.join(tmpdir, f"slide_{i:03d}.png")
+        img  = render_slide(slide, i + 1, len(slides_data), fonts)
+        img.save(path)
+        png_paths.append(path)
+        print(f"Saved slide {i}: {path} ({os.path.getsize(path)} bytes)")
 
-    # Build file list for ffmpeg (no glob needed)
-    list_file = os.path.join(tmpdir, "files.txt")
-    with open(list_file, "w") as f:
-        for i in range(total):
-            slide_path = os.path.join(tmpdir, f"slide_{i:03d}.png")
-            f.write(f"file '{slide_path}'\n")
-            f.write(f"duration 3\n")
+    # Write concat file
+    concat_file = os.path.join(tmpdir, "list.txt")
+    with open(concat_file, "w") as f:
+        for p in png_paths:
+            f.write(f"file '{p}'\n")
+            f.write("duration 3\n")
+        # ffmpeg concat needs last file repeated without duration
+        f.write(f"file '{png_paths[-1]}'\n")
 
-    # Use ffmpeg concat demuxer instead of glob
-    subprocess.run([
+    print(f"Concat file written: {concat_file}")
+    print(open(concat_file).read())
+
+    # Run ffmpeg
+    cmd = [
         "ffmpeg", "-y",
         "-f", "concat",
         "-safe", "0",
-        "-i", list_file,
-        "-vf", "fps=30,format=yuv420p",
-        "-s", "1080x1920",
+        "-i", concat_file,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
         output_path
-    ], check=True)
+    ]
+    print(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    print("STDOUT:", result.stdout[-500:] if result.stdout else "")
+    print("STDERR:", result.stderr[-1000:] if result.stderr else "")
 
+    if result.returncode != 0:
+        raise Exception(f"ffmpeg failed: {result.stderr[-500:]}")
+
+    print(f"Video created: {output_path} ({os.path.getsize(output_path)} bytes)")
     return output_path
+
 
 @app.route("/render", methods=["POST"])
 def render_endpoint():
     try:
-        data       = request.get_json()
-        slides     = data["slides"]          # list of {label, headline, subtext}
-        caption    = data.get("caption", "")
-        hashtags   = data.get("hashtags", "")
+        data     = request.get_json(force=True)
+        slides   = data.get("slides", [])
+        caption  = data.get("caption", "")
+        hashtags = data.get("hashtags", "")
 
-        out_path   = f"/tmp/tiktok_{os.urandom(4).hex()}.mp4"
+        print(f"Received {len(slides)} slides")
+
+        if not slides:
+            return jsonify({"ok": False, "error": "No slides provided"}), 400
+
+        out_path = f"/tmp/tiktok_{os.urandom(4).hex()}.mp4"
         make_video(slides, out_path)
 
         # Upload to Buffer
@@ -105,31 +133,41 @@ def render_endpoint():
         buffer_channel = os.environ["BUFFER_CHANNEL_ID"]
 
         with open(out_path, "rb") as f:
-            upload = requests.post(
+            upload_resp = requests.post(
                 "https://api.bufferapp.com/1/media/upload.json",
                 headers={"Authorization": f"Bearer {buffer_token}"},
                 files={"file": ("tiktok.mp4", f, "video/mp4")},
             )
-        media_id = upload.json().get("id")
 
-        # Schedule post via Buffer
-        post_text = f"{caption}\n\n{hashtags}"
-        response  = requests.post(
+        print(f"Buffer upload response: {upload_resp.status_code} {upload_resp.text}")
+        upload_data = upload_resp.json()
+        media_id = upload_data.get("id")
+
+        post_resp = requests.post(
             "https://api.bufferapp.com/1/updates/create.json",
             headers={"Authorization": f"Bearer {buffer_token}"},
             json={
                 "profile_ids": [buffer_channel],
-                "text": post_text,
+                "text": f"{caption}\n\n{hashtags}",
                 "media": {"video_id": media_id},
                 "now": "true"
             }
         )
 
+        print(f"Buffer post response: {post_resp.status_code} {post_resp.text}")
         os.remove(out_path)
-        return jsonify({"ok": True, "buffer": response.json()})
+
+        return jsonify({"ok": True, "buffer": post_resp.json()})
 
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        tb = traceback.format_exc()
+        print(f"ERROR: {tb}")
+        return jsonify({"ok": False, "error": str(e), "traceback": tb}), 500
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
 
 
 if __name__ == "__main__":
